@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+dist/
+build/
+.pnpm-store/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Docker
+.dockerignore
+
+# Next.js
+.next/
+out/
+
+# Database
+*.db
+*.sqlite
+
+# Temporary files
+*.tmp
+*.temp

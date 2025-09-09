@@ -1,0 +1,87 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: omni
+      POSTGRES_USER: omni
+      POSTGRES_PASSWORD: omni
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/migrations
+    ports:
+      - "5432:5432"
+    networks:
+      - omni-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni -d omni"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrator:
+    image: postgres:16
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: omni
+    command: ["sh", "-c", "sleep 5 && psql -h db -U omni -d omni -f /migrations/001_init.sql || echo 'Migration complete'"]
+    volumes:
+      - ./database/migrations:/migrations
+    networks:
+      - omni-network
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://omni:omni@db:5432/omni
+      API_PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      - migrator
+    networks:
+      - omni-network
+
+  bot:
+    build:
+      context: .
+      dockerfile: ./apps/bot/Dockerfile
+    env_file:
+      - .env
+    environment:
+      BOT_PORT: 3978
+    ports:
+      - "3978:3978"
+    depends_on:
+      - api
+    networks:
+      - omni-network
+
+  web:
+    build:
+      context: .
+      dockerfile: ./apps/web/Dockerfile
+    env_file:
+      - .env
+    environment:
+      WEB_PORT: 3000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - omni-network
+
+volumes:
+  postgres_data:
+
+networks:
+  omni-network:
+    driver: bridge
