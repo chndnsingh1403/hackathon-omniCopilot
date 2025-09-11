@@ -1,25 +1,22 @@
-import OpenAI from 'openai';
+import dotenv from 'dotenv';
+dotenv.config();
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+let bedrock: BedrockRuntimeClient | null = null;
 
-let openai: OpenAI | null = null;
-
-/**
- * Initialize OpenAI client
- */
-function getOpenAIClient(): OpenAI {
-  if (!openai) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY environment variable is required');
-    }
-    
-    openai = new OpenAI({
-      apiKey: apiKey,
-    });
-    
-    console.log('✅ OpenAI client initialized');
+function getBedrockClient(): BedrockRuntimeClient {
+  if (!bedrock) {
+    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+    if (!region) throw new Error('AWS_REGION is required for Bedrock');
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const sessionToken = process.env.AWS_SESSION_TOKEN;
+    const credentials = accessKeyId && secretAccessKey
+      ? { accessKeyId, secretAccessKey, sessionToken }
+      : undefined;
+    bedrock = new BedrockRuntimeClient({ region, credentials });
+    console.log('✅ AWS Bedrock client initialized');
   }
-  
-  return openai;
+  return bedrock;
 }
 
 /**
@@ -29,87 +26,67 @@ export async function embed(text: string): Promise<number[]> {
   if (!text || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
-
-  const client = getOpenAIClient();
-  const model = process.env.MODEL_EMBEDDING || 'text-embedding-3-small';
-  
-  let attempt = 0;
-  const maxAttempts = 3;
-  
-  while (attempt < maxAttempts) {
-    try {
-      const response = await client.embeddings.create({
-        model: model,
-        input: text.trim(),
-      });
-      
-      const embedding = response.data[0]?.embedding;
-      if (!embedding) {
-        throw new Error('No embedding returned from OpenAI');
-      }
-      
-      // Validate embedding length for text-embedding-3-small
-      if (embedding.length !== 1536) {
-        throw new Error(`Expected embedding length 1536, got ${embedding.length}`);
-      }
-      
-      return embedding;
-      
-    } catch (error: any) {
-      attempt++;
-      
-      // Check if it's a rate limit error (429) or server error (5xx)
-      const isRetryable = error?.status === 429 || 
-                         (error?.status >= 500 && error?.status < 600);
-      
-      if (isRetryable && attempt < maxAttempts) {
-        const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
-        console.warn(`Embedding attempt ${attempt} failed, retrying in ${backoffMs}ms...`);
-        await sleep(backoffMs);
-        continue;
-      }
-      
-      console.error('Failed to create embedding:', error);
-      throw new Error(`Failed to create embedding after ${attempt} attempts: ${error.message}`);
-    }
+  const client = getBedrockClient();
+  const modelId = process.env.BEDROCK_EMBEDDING_MODEL || 'amazon.titan-embed-text-v1';
+  const body = {
+    inputText: text.trim()
+  } as any;
+  const command = new InvokeModelCommand({
+    modelId,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: Buffer.from(JSON.stringify(body))
+  });
+  const resp = await client.send(command);
+  const json = JSON.parse(Buffer.from(resp.body as Uint8Array).toString('utf-8')) as { embedding: number[] };
+  if (!json.embedding || !Array.isArray(json.embedding)) {
+    throw new Error('No embedding returned from Bedrock');
   }
-  
-  throw new Error('Max retry attempts exceeded');
+  const targetDim = 1536;
+  const vec = json.embedding;
+  if (vec.length === targetDim) return vec;
+  // Normalize to DB dimension to avoid INSERT errors
+  if (vec.length < targetDim) {
+    const padded = vec.concat(Array(targetDim - vec.length).fill(0));
+    return padded.slice(0, targetDim);
+  }
+  return vec.slice(0, targetDim);
 }
 
 /**
  * Create chat completion using OpenAI
  */
 export async function createChatCompletion(
-  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-  options: Partial<OpenAI.Chat.Completions.ChatCompletionCreateParams> = {}
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+  options: { max_tokens?: number; temperature?: number } = {}
 ): Promise<string> {
-  const client = getOpenAIClient();
-  const model = process.env.MODEL_COMPLETION || 'gpt-4';
-  
-  try {
-    const response = await client.chat.completions.create({
-      model: model,
-      messages: messages,
-      temperature: 0.1,
-      max_tokens: 2000,
-      stream: false, // Ensure non-streaming response
-      ...options,
-    });
-    
-    // Type assertion since we know it's not a stream due to stream: false
-    const completion = response as any;
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response content from OpenAI');
-    }
-    
-    return content;
-    
-  } catch (error: any) {
-    console.error('Chat completion error:', error);
-    throw new Error(`Chat completion failed: ${error.message}`);
+  const client = getBedrockClient();
+  const modelId = process.env.BEDROCK_CHAT_MODEL || 'anthropic.claude-3-5-sonnet-20240620-v1:0';
+  const systemParts: string[] = [];
+  const chatMessages: any[] = [];
+  for (const m of messages) {
+    if (m.role === 'system' && m.content) systemParts.push(m.content);
+    else if ((m.role === 'user' || m.role === 'assistant') && m.content)
+      chatMessages.push({ role: m.role, content: [{ type: 'text', text: m.content }] });
   }
+  const body = {
+    anthropic_version: 'bedrock-2023-05-31',
+    max_tokens: options.max_tokens || 2000,
+    temperature: options.temperature ?? 0.1,
+    system: systemParts.join('\n\n').trim() || undefined,
+    messages: chatMessages
+  } as any;
+  const command = new InvokeModelCommand({
+    modelId,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: Buffer.from(JSON.stringify(body))
+  });
+  const resp = await client.send(command);
+  const json = JSON.parse(Buffer.from(resp.body as Uint8Array).toString('utf-8')) as any;
+  const content = json?.content?.[0]?.text || json?.output_text || '';
+  if (!content) throw new Error('No response content from Bedrock');
+  return content;
 }
 
 /**
