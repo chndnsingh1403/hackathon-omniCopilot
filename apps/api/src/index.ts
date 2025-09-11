@@ -104,7 +104,7 @@ app.listen(port, '0.0.0.0', () => {
   // Log configuration status
   console.log('Configuration status:');
   console.log(`- Database: ${process.env.DATABASE_URL ? '✅' : '❌'}`);
-  console.log(`- OpenAI: ${process.env.OPENAI_API_KEY ? '✅' : '❌'}`);
+  console.log(`- Bedrock: ${process.env.AWS_REGION ? '✅' : '❌'}`);
   console.log(`- GitHub Token: ${process.env.GITHUB_TOKEN ? '✅' : '❌'}`);
   console.log(`- GitHub Repositories: ${process.env.GITHUB_REPOSITORIES ? '✅' : '❌'}`);
   console.log(`- Jira: ${process.env.JIRA_BASE_URL && process.env.JIRA_API_TOKEN ? '✅' : '❌'}`);

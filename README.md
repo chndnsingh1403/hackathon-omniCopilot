@@ -1,4 +1,4 @@
-# OmniCopilot - AI Development Intelligence Platform
+appomni# OmniCopilot - AI Development Intelligence Platform
 
 
 🤖 **OmniCopilot** is an AI-powered development intelligence platform that ingests data from GitHub (via polling by default, or webhooks if available) and Jira, stores it with embeddings in PostgreSQL, and provides intelligent answers through a RAG (Retrieval-Augmented Generation) API, Microsoft Teams bot, and Next.js dashboard.
@@ -6,7 +6,7 @@
 ## ✨ Features
 
 - **📥 Data Ingestion**: Automatically ingests GitHub PRs/commits via polling (default) or webhooks (optional), and Jira issues via polling
-- **🧠 AI-Powered Q&A**: Uses OpenAI embeddings and GPT models for intelligent question answering
+- **🧠 AI-Powered Q&A**: Uses AWS Bedrock (Claude, Titan) for embeddings and generation
 - **📚 Citations**: Every answer includes numbered citations with clickable URLs
 - **🤖 Teams Bot**: Microsoft Teams integration for conversational queries
 - **📊 Dashboard**: Next.js web interface with role-based queries and KPI display
@@ -49,7 +49,7 @@
 ### Prerequisites
 
 - Docker & Docker Compose
-- OpenAI API key
+- AWS account with Bedrock access (Claude/Titan models) and credentials
 - GitHub webhook secret
 - (Optional) Jira API credentials
 - (Optional) Microsoft Teams Bot credentials
@@ -68,9 +68,16 @@ cp .env.example .env
 Edit `.env` and fill in your credentials:
 
 ```bash
-# Required
 DATABASE_URL=postgres://omni:omni@db:5432/omni
-OPENAI_API_KEY=sk-your-openai-api-key
+
+# LLM (AWS Bedrock)
+AWS_REGION=us-east-1
+# If not using an instance profile, set standard AWS creds in environment
+# AWS_ACCESS_KEY_ID=...
+# AWS_SECRET_ACCESS_KEY=...
+# Optional overrides
+# BEDROCK_CHAT_MODEL=anthropic.claude-3-5-sonnet-20240620-v1:0
+# BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 
 # GitHub Polling (default)
 GITHUB_TOKEN=your-github-personal-access-token
@@ -219,7 +226,7 @@ omnicopilot/
 ├── packages/shared/           # Shared utilities
 │   ├── src/
 │   │   ├── pg.ts             # Database utilities
-│   │   ├── embed.ts          # OpenAI integration
+│   │   ├── embed.ts          # AWS Bedrock integration
 │   │   ├── chunker.ts        # Text chunking
 │   │   └── types.ts          # TypeScript types
 ├── apps/api/                 # Express.js API
@@ -292,7 +299,7 @@ docker-compose logs -f web
 
 ### Common Issues
 
-1. **Embeddings not working**: Check OpenAI API key and quota
+1. **Embeddings not working**: Check AWS credentials, region, and Bedrock model IDs
 2. **GitHub polling not working**: Check your GitHub token and repository list
 3. **GitHub webhooks failing**: Verify webhook secret and URL (if using webhooks)
 3. **Teams bot not responding**: Check bot credentials and endpoint
@@ -349,7 +356,8 @@ curl -X POST http://localhost:4000/api/query \
 NODE_ENV=production
 DATABASE_URL=postgres://user:pass@prod-db:5432/omni
 GITHUB_WEBHOOK_SECRET=secure-secret-here
-OPENAI_API_KEY=sk-prod-key-here
+# AWS credentials should be provided via environment or instance profile
+# AWS_REGION=us-east-1
 # ... other production configs
 ```
 
