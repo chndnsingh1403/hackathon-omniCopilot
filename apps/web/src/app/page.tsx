@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChartBarIcon, UserGroupIcon, BeakerIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import type { QueryRequest, QueryResponse, Role } from '@omnicopilot/shared';
 
@@ -51,6 +51,38 @@ function CitationLink({ citation }: CitationLinkProps) {
   );
 }
 
+// Add default questions for each role
+const defaultQuestions: Record<Role, string[]> = {
+  dev: [
+    'Why did the deployment fail?',
+    'What bugs are currently open?',
+    'Are there any new PRs assigned to me?'
+  ],
+  qa: [
+    'Any new feature added for writing test cases?',
+    'Which JIRA issues have PRs raised recently?',
+    'What are the recent test failures?'
+  ],
+  manager: [
+    'What is the project status?',
+    'What is the impact on the release?',
+    'Are there any critical blockers for the release?'
+  ]
+};
+
+interface DigestResponse {
+  health_score: number;
+  top_risks: string[];
+  recent_activity: {
+    prs: number;
+    commits: number;
+    issues: number;
+  };
+  p1_issues?: number;
+  ci_failures?: number;
+  generated_at: string;
+}
+
 export default function HomePage() {
   const [role, setRole] = useState<Role>('dev');
   const [question, setQuestion] = useState('');
@@ -58,6 +90,32 @@ export default function HomePage() {
   const [response, setResponse] = useState<QueryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [digest, setDigest] = useState<DigestResponse | null>(null);
+  const [digestLoading, setDigestLoading] = useState(true);
+  const [digestError, setDigestError] = useState('');
+
+  useEffect(() => {
+    setQuestion('');
+  }, [role]);
+
+  useEffect(() => {
+    async function fetchDigest() {
+      setDigestLoading(true);
+      setDigestError('');
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        const res = await fetch(`${apiUrl}/api/digest`);
+        if (!res.ok) throw new Error('Failed to fetch digest');
+        const data: DigestResponse = await res.json();
+        setDigest(data);
+      } catch (err) {
+        setDigestError('Could not load dashboard KPIs');
+      } finally {
+        setDigestLoading(false);
+      }
+    }
+    fetchDigest();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,30 +180,38 @@ export default function HomePage() {
 
         {/* KPI Dashboard */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
-          <KPICard
-            title="Health Score"
-            value="87%"
-            icon={<ChartBarIcon className="h-6 w-6" />}
-            color="text-success-500"
-          />
-          <KPICard
-            title="P1 Issues"
-            value="3"
-            icon={<ExclamationTriangleIcon className="h-6 w-6" />}
-            color="text-danger-500"
-          />
-          <KPICard
-            title="Merged PRs (7d)"
-            value="24"
-            icon={<UserGroupIcon className="h-6 w-6" />}
-            color="text-primary-500"
-          />
-          <KPICard
-            title="CI Failures (7d)"
-            value="7"
-            icon={<BeakerIcon className="h-6 w-6" />}
-            color="text-warning-500"
-          />
+          {digestLoading ? (
+            <div className="col-span-4 text-center text-gray-400">Loading KPIs...</div>
+          ) : digestError ? (
+            <div className="col-span-4 text-center text-danger-500">{digestError}</div>
+          ) : digest ? (
+            <>
+              <KPICard
+                title="Health Score"
+                value={digest.health_score ? `${digest.health_score}%` : 'N/A'}
+                icon={<ChartBarIcon className="h-6 w-6" />}
+                color="text-success-500"
+              />
+              <KPICard
+                title="P1 Issues"
+                value={digest.p1_issues ?? digest.top_risks.filter(r => /P1|critical|blocker/i.test(r)).length}
+                icon={<ExclamationTriangleIcon className="h-6 w-6" />}
+                color="text-danger-500"
+              />
+              <KPICard
+                title="Merged PRs (7d)"
+                value={digest.recent_activity.prs ?? 'N/A'}
+                icon={<UserGroupIcon className="h-6 w-6" />}
+                color="text-primary-500"
+              />
+              <KPICard
+                title="CI Failures (7d)"
+                value={digest.ci_failures ?? digest.top_risks.filter(r => /CI|test|failure/i.test(r)).length}
+                icon={<BeakerIcon className="h-6 w-6" />}
+                color="text-warning-500"
+              />
+            </>
+          ) : null}
         </div>
 
         {/* Query Interface */}
@@ -171,6 +237,23 @@ export default function HomePage() {
                     >
                       <span className="mr-2">{option.icon}</span>
                       {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Question Suggestions */}
+              <div>
+                <div className="mb-2 text-xs text-gray-500">Suggestions for {roleOptions.find(r => r.value === role)?.label}:</div>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {defaultQuestions[role].map((q, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="px-3 py-1 rounded bg-primary-50 text-primary-700 border border-primary-200 text-xs hover:bg-primary-100"
+                      onClick={() => setQuestion(q)}
+                    >
+                      {q}
                     </button>
                   ))}
                 </div>

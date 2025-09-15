@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { query } from '@omnicopilot/shared';
-import { embedDoc } from './ingest-utils.js';
+import { embedDoc, embedDocMulti } from './ingest-utils.js';
 
 interface JiraIssue {
   key: string;
@@ -13,7 +13,19 @@ interface JiraIssue {
     creator: {
       displayName: string;
     };
+    sprint?: any; // Add sprint field
   };
+}
+
+interface JiraComment {
+  body: {
+    content: any[];
+  };
+}
+
+interface JiraAttachment {
+  filename: string;
+  content: string;
 }
 
 interface JiraSearchResponse {
@@ -83,7 +95,7 @@ async function pollJiraIssues(): Promise<void> {
       const params = new URLSearchParams({
         jql: jql,
         maxResults: '20',
-        fields: 'summary,description,status,creator'
+        fields: 'summary,description,status,creator,sprint' // Add sprint field
       });
 
       const response = await fetch(`${url}?${params}`, {
@@ -126,11 +138,20 @@ async function processJiraIssue(issue: JiraIssue, projectKey: string): Promise<v
   if (issue.fields.description) {
     description = convertAdfToText(issue.fields.description);
   }
-  
-  const raw = `${title}\n\n${description}`;
+
+  // Fetch comments
+  const comments = await fetchJiraComments(issue.key);
+  const commentsTextArr = comments.map(comment => convertAdfToText(comment.body));
+
+  // Fetch attachments
+  const attachments = await fetchJiraAttachments(issue.key);
+  const attachmentsTextArr = attachments.map(attachment => `Attachment: ${attachment.filename}`);
+
+  const raw = [title, description, ...commentsTextArr, ...attachmentsTextArr].filter(Boolean).join('\n\n');
   const metadata = {
     status: issue.fields.status.name,
-    project: projectKey
+    project: projectKey,
+    sprint: issue.fields.sprint ? (issue.fields.sprint.name || issue.fields.sprint.id || issue.fields.sprint) : undefined
   };
 
   try {
@@ -160,16 +181,84 @@ async function processJiraIssue(issue: JiraIssue, projectKey: string): Promise<v
     if (row) {
       const action = row.was_inserted ? 'Stored' : 'Updated';
       console.log(`📄 ${action} Jira issue: ${externalId} (ID: ${row.id})`);
-      
-      // Embed the document asynchronously (only if new or updated content)
-      if (raw.trim()) {
-        embedDoc(row.id, raw).catch(error => {
-          console.error(`Failed to embed Jira issue ${externalId}:`, error);
-        });
-      }
+      // Embed description, comments, and attachments as sequential chunks
+      const texts = [title, description, ...commentsTextArr, ...attachmentsTextArr];
+      await embedDocMulti(row.id, texts);
     }
   } catch (error) {
     console.error(`Failed to store Jira issue ${externalId}:`, error);
+  }
+}
+
+/**
+ * Fetch comments for a Jira issue
+ */
+async function fetchJiraComments(issueKey: string): Promise<JiraComment[]> {
+  const baseUrl = process.env.JIRA_BASE_URL;
+  const email = process.env.JIRA_EMAIL;
+  const apiToken = process.env.JIRA_API_TOKEN;
+
+  if (!baseUrl || !email || !apiToken) {
+    console.error('❌ Missing Jira configuration');
+    return [];
+  }
+
+  try {
+    const url = `${baseUrl}/rest/api/3/issue/${issueKey}/comment`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Jira API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.comments || [];
+  } catch (error) {
+    console.error(`Failed to fetch comments for issue ${issueKey}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Fetch attachments for a Jira issue
+ */
+async function fetchJiraAttachments(issueKey: string): Promise<JiraAttachment[]> {
+  const baseUrl = process.env.JIRA_BASE_URL;
+  const email = process.env.JIRA_EMAIL;
+  const apiToken = process.env.JIRA_API_TOKEN;
+
+  if (!baseUrl || !email || !apiToken) {
+    console.error('❌ Missing Jira configuration');
+    return [];
+  }
+
+  try {
+    const url = `${baseUrl}/rest/api/3/issue/${issueKey}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Jira API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.fields.attachment || [];
+  } catch (error) {
+    console.error(`Failed to fetch attachments for issue ${issueKey}:`, error);
+    return [];
   }
 }
 

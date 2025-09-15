@@ -3,7 +3,7 @@ import { query, chunkText, embed } from '@omnicopilot/shared';
 /**
  * Embed a document by splitting it into chunks and storing embeddings
  */
-export async function embedDoc(docId: number, text: string): Promise<void> {
+export async function embedDoc(docId: number, text: string, startChunkIndex: number = 0): Promise<void> {
   if (!text || text.trim().length === 0) {
     console.log(`⏭️  Skipping empty document ${docId}`);
     return;
@@ -26,7 +26,7 @@ export async function embedDoc(docId: number, text: string): Promise<void> {
       
       await Promise.all(
         batch.map(async (chunk, batchIndex) => {
-          const chunkIndex = i + batchIndex;
+          const chunkIndex = startChunkIndex + i + batchIndex;
           
           try {
             // Generate embedding
@@ -56,6 +56,33 @@ export async function embedDoc(docId: number, text: string): Promise<void> {
   } catch (error) {
     console.error(`❌ Failed to embed document ${docId}:`, error);
     throw error;
+  }
+}
+
+/**
+ * Embed multiple texts as sequential chunks for a document
+ */
+export async function embedDocMulti(docId: number, texts: string[]): Promise<void> {
+  if (!texts || texts.length === 0) return;
+  // Delete existing chunks for this document
+  await query('DELETE FROM doc_chunks WHERE doc_id = $1', [docId]);
+  let chunkIndex = 0;
+  for (const text of texts) {
+    if (!text || text.trim().length === 0) continue;
+    const chunks = chunkText(text, { maxChunkSize: 2000, overlap: 150 });
+    for (const chunk of chunks) {
+      try {
+        const embedding = await embed(chunk);
+        await query(
+          `INSERT INTO doc_chunks (doc_id, chunk_index, content, embedding) VALUES ($1, $2, $3, $4)`,
+          [docId, chunkIndex, chunk, JSON.stringify(embedding)]
+        );
+        console.log(`✅ Embedded chunk ${chunkIndex} for document ${docId}`);
+        chunkIndex++;
+      } catch (error) {
+        console.error(`❌ Failed to embed chunk ${chunkIndex} for document ${docId}:`, error);
+      }
+    }
   }
 }
 
