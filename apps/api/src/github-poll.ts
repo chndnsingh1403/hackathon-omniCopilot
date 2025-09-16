@@ -380,7 +380,7 @@ let githubPoller: GithubPoller | null = null;
 export function startGithubPolling(): void {
   const token = process.env.GITHUB_TOKEN;
   const repositoriesEnv = process.env.GITHUB_REPOSITORIES;
-  const pollInterval = process.env.GITHUB_POLL_INTERVAL || '*/5 * * * *'; // Default: every 5 minutes
+  const pollInterval = process.env.GITHUB_POLL_INTERVAL || '*/5 * * * * *'; // Every 5 seconds
 
   if (!token) {
     console.log('GITHUB_TOKEN not provided, skipping GitHub polling');
